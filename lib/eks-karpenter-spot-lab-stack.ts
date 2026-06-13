@@ -3,16 +3,26 @@
 
 ├─ Managed Node Group (On-Demand)
 │  NodeGroup Name: system-ng
+│
+│  役割:
 │   ├─ Karpenter Controller
+│   ├─ CoreDNS
 │   ├─ aws-node
 │   ├─ kube-proxy
-│   ├─ coredns
 │   └─ 将来的な監視Pod
 │
-└─ Karpenter 管理下 Node (自動生成)
-    ├─ Spot Node ← アプリケーションはこっちにデプロイ
-    ├─ Spot Node
-    └─ Spot Node
+└─ Karpenter 管理下 Node
+   NodePool: spot-workload
+   Capacity Type: Spot
+   作成タイミング:
+     └─ Pending Pod が発生したとき
+   削除タイミング:
+     └─ 不要になったとき / Consolidation対象になったとき
+
+   ├─ Spot Node ← アプリケーションPod
+   ├─ Spot Node ← アプリケーションPod
+   └─ Spot Node ← アプリケーションPod
+
 
 # Managed Node Group と Karpenter の違い
 Managed Node Group: ASG / NodeGroup 単位で Node を管理
@@ -59,6 +69,10 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
       defaultCapacity: 0,
       endpointAccess: eks.EndpointAccess.PUBLIC_AND_PRIVATE,
       kubectlLayer: new KubectlV31Layer(this, 'KubectlLayer'),
+
+      // Access Entry を明示追加
+      authenticationMode: eks.AuthenticationMode.API_AND_CONFIG_MAP,
+      bootstrapClusterCreatorAdminPermissions: true,
     });
 
     // =====================================================
@@ -95,5 +109,31 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       emptyOnDelete: true,
     });
+
+    // =====================================================
+    // EKS Access Entry
+    // =====================================================
+
+    // CDK 実行時に外から渡す IAM User / Role の ARN
+    const adminPrincipalArn = this.node.tryGetContext('adminPrincipalArn');
+    
+    // EKS Cluster に対する kubectl 管理権限を付与
+    // (public repository のため ARN はコードへ直接記載しない)
+    if (adminPrincipalArn) {
+      new eks.CfnAccessEntry(this, 'AdminAccessEntry', {
+        clusterName: cluster.clusterName,
+        principalArn: adminPrincipalArn,
+        type: 'STANDARD',
+        accessPolicies: [
+          {
+            policyArn: 'arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy',
+            accessScope: {
+              type: 'cluster',
+            },
+          },
+        ],
+      });
+    }
+
   }
 }
