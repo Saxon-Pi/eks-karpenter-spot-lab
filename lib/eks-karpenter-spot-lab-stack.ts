@@ -94,14 +94,29 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
         'workload-type': 'system',
         'node-lifecycle': 'on-demand',
       },
+      // Karpenter には toleration を付けたが、CoreDNS には付けておらず、
+      // Karpenter Pod は起動しても、DNS 解決できず STS へ到達できない問題が起きたため一旦無効
+      // Karpenter が起動してから、system node を隔離する設計に戻す
       // アプリを system Node に載せない
-      taints: [
-        {
-          key: 'system',
-          value: 'true',
-          effect: eks.TaintEffect.NO_SCHEDULE,
-        },
-      ],
+      // taints: [
+      //   {
+      //     key: 'system',
+      //     value: 'true',
+      //     effect: eks.TaintEffect.NO_SCHEDULE,
+      //   },
+      // ],
+    });
+
+    // =====================================================
+    // Karpenter Namespace
+    // =====================================================
+
+    const karpenterNamespace = cluster.addManifest('KarpenterNamespace', {
+      apiVersion: 'v1',
+      kind: 'Namespace',
+      metadata: {
+        name: 'karpenter',
+      },
     });
 
     // =====================================================
@@ -142,11 +157,76 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
     );
 
+    // karpenterNodeInstanceProfile: Karpenter が作成した Node 自身の権限
+    // EC2インスタンスには Instance Profile 経由で IAM Role を紐づける
+    const karpenterNodeInstanceProfile = new iam.CfnInstanceProfile(
+      this,
+      'KarpenterNodeInstanceProfile',
+      {
+        instanceProfileName: `KarpenterNodeInstanceProfile-${clusterName}`,
+        roles: [karpenterNodeRole.roleName],
+      },
+    );
+
+    // karpenterServiceAccount: Karpenter Controller (Pod) 自身の権限
+    // Pod には ServiceAccount 経由で IAM Role を紐づける
+    const karpenterServiceAccount = cluster.addServiceAccount('KarpenterServiceAccount', {
+      name: 'karpenter',
+      namespace: 'karpenter',
+    });
+
+    karpenterServiceAccount.node.addDependency(karpenterNamespace);
+
+    karpenterServiceAccount.role.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'ec2:CreateFleet',
+          'ec2:CreateLaunchTemplate',
+          'ec2:CreateTags',
+          'ec2:DeleteLaunchTemplate',
+          'ec2:DescribeAvailabilityZones',
+          'ec2:DescribeImages',
+          'ec2:DescribeInstances',
+          'ec2:DescribeInstanceTypeOfferings',
+          'ec2:DescribeInstanceTypes',
+          'ec2:DescribeLaunchTemplates',
+          'ec2:DescribeSecurityGroups',
+          'ec2:DescribeSpotPriceHistory',
+          'ec2:DescribeSubnets',
+          'ec2:RunInstances',
+          'ec2:TerminateInstances',
+          'pricing:GetProducts',
+          'ssm:GetParameter',
+          'eks:DescribeCluster',
+        ],
+        resources: ['*'],
+      }),
+    );
+
+    karpenterServiceAccount.role.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: ['iam:PassRole'],
+        resources: [karpenterNodeRole.roleArn],
+      }),
+    );
+
     // Karpenter の Spot / Rebalance / EC2 状態変化イベント受信用 Queue
     const interruptionQueue = new sqs.Queue(this, 'KarpenterInterruptionQueue', {
       queueName: `${clusterName}-karpenter-interruption`,
       retentionPeriod: cdk.Duration.minutes(5),
     });
+
+    karpenterServiceAccount.role.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'sqs:DeleteMessage',
+          'sqs:GetQueueAttributes',
+          'sqs:GetQueueUrl',
+          'sqs:ReceiveMessage',
+        ],
+        resources: [interruptionQueue.queueArn],
+      }),
+    );
 
     // SQS が EventBridge からメッセージを受け取れるようにする
     interruptionQueue.addToResourcePolicy(
