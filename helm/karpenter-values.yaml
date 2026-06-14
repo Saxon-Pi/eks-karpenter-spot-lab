@@ -1,0 +1,41 @@
+# helm/karpenter-values.yaml
+
+# Karpenter 実行コマンド
+# helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
+#   --version 1.0.8 \
+#   --namespace karpenter \
+#   --values helm/karpenter-values.yaml \
+#   --wait
+
+# oci://public.ecr.aws/karpenter/karpenter から以下の manifest を取得している
+# その後、このファイルで values を上書きしている
+
+# public.ecr.aws/karpenter/karpenter
+# └── Chart.yaml
+# └── values.yaml
+# └── templates/
+#     ├── deployment.yaml
+#     ├── service.yaml
+#     ├── serviceaccount.yaml
+#     ├── ...
+
+serviceAccount:
+  create: false
+  name: karpenter
+
+settings:
+  clusterName: eks-karpenter-spot-lab
+  interruptionQueue: eks-karpenter-spot-lab-karpenter-interruption
+
+replicas: 1
+
+controller:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# 今回は taints を外しているので tolerations は不要
