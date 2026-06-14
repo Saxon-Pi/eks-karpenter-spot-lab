@@ -44,6 +44,10 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as eks from 'aws-cdk-lib/aws-eks';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import { KubectlV31Layer } from '@aws-cdk/lambda-layer-kubectl-v31';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 
 export class EksKarpenterSpotLabStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -108,6 +112,86 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
       repositoryName: 'karpenter-test-app',
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       emptyOnDelete: true,
+    });
+
+    // =====================================================
+    // Karpenter IAM / Interruption Handling
+    // =====================================================
+
+    // Karpenter 公式が推奨する EventBridge Rules と SQS を使った
+    // interruption events を Karpenter Controller へ渡す構成
+
+    const clusterName = cluster.clusterName;
+
+    // Karpenter が作成する EC2 Node に付与する Role
+    const karpenterNodeRole = new iam.Role(this, 'KarpenterNodeRole', {
+      roleName: `KarpenterNodeRole-${clusterName}`,
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+    });
+
+    karpenterNodeRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonEKSWorkerNodePolicy'),
+    );
+    karpenterNodeRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonEKS_CNI_Policy'),
+    );
+    karpenterNodeRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonEC2ContainerRegistryReadOnly'),
+    );
+    karpenterNodeRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+    );
+
+    // Karpenter の Spot / Rebalance / EC2 状態変化イベント受信用 Queue
+    const interruptionQueue = new sqs.Queue(this, 'KarpenterInterruptionQueue', {
+      queueName: `${clusterName}-karpenter-interruption`,
+      retentionPeriod: cdk.Duration.minutes(5),
+    });
+
+    // SQS が EventBridge からメッセージを受け取れるようにする
+    interruptionQueue.addToResourcePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ServicePrincipal('events.amazonaws.com')],
+        actions: ['sqs:SendMessage'],
+        resources: [interruptionQueue.queueArn],
+      }),
+    );
+
+    // EventBridge: Spot Interruption Warning
+    new events.Rule(this, 'SpotInterruptionRule', {
+      eventPattern: {
+        source: ['aws.ec2'],
+        detailType: ['EC2 Spot Instance Interruption Warning'],
+      },
+      targets: [new targets.SqsQueue(interruptionQueue)],
+    });
+
+    // EventBridge: Rebalance Recommendation
+    new events.Rule(this, 'RebalanceRecommendationRule', {
+      eventPattern: {
+        source: ['aws.ec2'],
+        detailType: ['EC2 Instance Rebalance Recommendation'],
+      },
+      targets: [new targets.SqsQueue(interruptionQueue)],
+    });
+
+    // EventBridge: Instance State-change
+    new events.Rule(this, 'InstanceStateChangeRule', {
+      eventPattern: {
+        source: ['aws.ec2'],
+        detailType: ['EC2 Instance State-change Notification'],
+      },
+      targets: [new targets.SqsQueue(interruptionQueue)],
+    });
+
+    // EventBridge: AWS Health Event
+    new events.Rule(this, 'HealthEventRule', {
+      eventPattern: {
+        source: ['aws.health'],
+        detailType: ['AWS Health Event'],
+      },
+      targets: [new targets.SqsQueue(interruptionQueue)],
     });
 
     // =====================================================
