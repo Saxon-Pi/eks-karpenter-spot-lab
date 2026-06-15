@@ -66,18 +66,44 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
     // EKS Cluster
     // =====================================================
 
+    const clusterName = 'eks-karpenter-spot-lab';
+
     const cluster = new eks.Cluster(this, 'Cluster', {
-      clusterName: 'eks-karpenter-spot-lab',
+      clusterName,
       version: eks.KubernetesVersion.V1_31,
       vpc,
       defaultCapacity: 0,
       endpointAccess: eks.EndpointAccess.PUBLIC_AND_PRIVATE,
       kubectlLayer: new KubectlV31Layer(this, 'KubectlLayer'),
-
       // Access Entry を明示追加
       authenticationMode: eks.AuthenticationMode.API_AND_CONFIG_MAP,
       bootstrapClusterCreatorAdminPermissions: true,
     });
+
+    // =====================================================
+    // Security Group / Karpenter Discovery Tags
+    // =====================================================
+
+    // Karpenter が Node を起動する Private Subnet を探索するためのタグ
+    for (const subnet of vpc.privateSubnets) {
+      cdk.Tags.of(subnet).add(
+        'karpenter.sh/discovery',
+        clusterName,
+      );
+    }
+
+    // Karpenter が Node に付与する Security Group を探索するためのタグ
+    cdk.Tags.of(cluster.clusterSecurityGroup).add(
+      'karpenter.sh/discovery',
+      clusterName,
+    );
+    
+    // 上記でタグがつかない場合は手動で付与
+    // aws ec2 create-tags \
+    //   --profile <profile> \
+    //   --region <region> \
+    //   --resources sg-xxx \
+    //   --tags Key=karpenter.sh/discovery,Value=eks-karpenter-spot-lab
 
     // =====================================================
     // Managed NodeGroup for system / Karpenter controller
@@ -135,8 +161,6 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
 
     // Karpenter 公式が推奨する EventBridge Rules と SQS を使った
     // interruption events を Karpenter Controller へ渡す構成
-
-    const clusterName = cluster.clusterName;
 
     // Karpenter が作成する EC2 Node に付与する Role
     const karpenterNodeRole = new iam.Role(this, 'KarpenterNodeRole', {
