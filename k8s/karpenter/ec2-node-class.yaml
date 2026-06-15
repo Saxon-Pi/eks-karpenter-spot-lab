@@ -1,0 +1,24 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: spot
+spec:
+  amiFamily: AL2023
+  role: KarpenterNodeRole-eks-karpenter-spot-lab
+
+  # 指定した tag が付いている Subnet にインスタンスを起動する
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-karpenter-spot-lab
+
+  # 指定した tag が付いている SG を Node にアタッチ
+  # → new eks.Cluster(...) で SG も自動生成されている
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-karpenter-spot-lab
+
+  userData: |
+    #!/bin/bash
+    mkdir -p /opt/karpenter-lab
+    echo "node created by karpenter" > /opt/karpenter-lab/info.txt
+    date >> /opt/karpenter-lab/info.txt

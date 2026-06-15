@@ -1,0 +1,48 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: spot
+spec:
+  template:
+    metadata:
+      labels:
+        workload-type: karpenter-spot
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: spot
+      # 各要素の組み合わせでインスタンスタイプを指定することも可能
+      # requirements:
+      #   - key: karpenter.k8s.aws/instance-category
+      #     operator: In
+      #     values: ["c","m","r"]
+
+      #   - key: karpenter.k8s.aws/instance-generation
+      #     operator: Gt
+      #     values: ["5"]
+
+      #   - key: karpenter.k8s.aws/instance-size
+      #     operator: In
+      #     values: ["large","xlarge"]
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"] # Spot インスタンスだけ使用する
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+            - m5.large
+            - m5.xlarge
+            - m6i.large
+            - m6i.xlarge
+            - c6i.large
+            - c6i.xlarge
+            - r6i.large
+            - r6i.xlarge
+  limits:
+    cpu: "20"
+  # Node の削除条件
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized # Node が空になったら削除
+    consolidateAfter: 30s
