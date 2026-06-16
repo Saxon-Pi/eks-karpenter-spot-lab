@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: karpenter-lab
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: request-test-light
+  namespace: karpenter-lab
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: request-test-light
+  template:
+    metadata:
+      labels:
+        app: request-test-light
+    spec:
+      nodeSelector:
+        workload-type: karpenter-spot
+      containers:
+        - name: app
+          image: public.ecr.aws/nginx/nginx:latest
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi

@@ -4,6 +4,8 @@ metadata:
   name: spot
 spec:
   amiFamily: AL2023
+  amiSelectorTerms:
+    - alias: al2023@latest
   role: KarpenterNodeRole-eks-karpenter-spot-lab
 
   # 指定した tag が付いている Subnet にインスタンスを起動する

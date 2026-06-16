@@ -81,7 +81,7 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
     });
 
     // =====================================================
-    // Security Group / Karpenter Discovery Tags
+    // Karpenter Discovery Tags
     // =====================================================
 
     // Karpenter が Node を起動する Private Subnet を探索するためのタグ
