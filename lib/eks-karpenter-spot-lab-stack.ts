@@ -222,6 +222,12 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
           'pricing:GetProducts',
           'ssm:GetParameter',
           'eks:DescribeCluster',
+          'iam:GetInstanceProfile',
+          'iam:CreateInstanceProfile',
+          'iam:DeleteInstanceProfile',
+          'iam:AddRoleToInstanceProfile',
+          'iam:RemoveRoleFromInstanceProfile',
+          'iam:TagInstanceProfile',
         ],
         resources: ['*'],
       }),
@@ -309,7 +315,7 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
     // (public repository のため ARN はコードへ直接記載しない)
     if (adminPrincipalArn) {
       new eks.CfnAccessEntry(this, 'AdminAccessEntry', {
-        clusterName: cluster.clusterName,
+        clusterName,
         principalArn: adminPrincipalArn,
         type: 'STANDARD',
         accessPolicies: [
@@ -322,6 +328,14 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
         ],
       });
     }
+
+    // Karpenter Node Role 用 Access Entry
+    // Karpenter が作成した Node が EKS Cluster に登録できるようにする
+    new eks.CfnAccessEntry(this, 'KarpenterNodeAccessEntry', {
+      clusterName,
+      principalArn: karpenterNodeRole.roleArn,
+      type: 'EC2_LINUX',
+    });
 
   }
 }
