@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: request-test-heavy
+  namespace: karpenter-lab
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: request-test-heavy
+  template:
+    metadata:
+      labels:
+        app: request-test-heavy
+    spec:
+      nodeSelector:
+        workload-type: karpenter-spot
+      containers:
+        - name: app
+          image: public.ecr.aws/nginx/nginx:latest
+          resources:
+            requests:
+              cpu: 1500m
+              memory: 3Gi
