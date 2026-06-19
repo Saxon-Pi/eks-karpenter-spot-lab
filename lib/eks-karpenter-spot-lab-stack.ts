@@ -314,7 +314,7 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
     // EKS Cluster に対する kubectl 管理権限を付与
     // (public repository のため ARN はコードへ直接記載しない)
     if (adminPrincipalArn) {
-      new eks.CfnAccessEntry(this, 'AdminAccessEntry', {
+      const adminAccessEntry = new eks.CfnAccessEntry(this, 'AdminAccessEntry', {
         clusterName,
         principalArn: adminPrincipalArn,
         type: 'STANDARD',
@@ -327,15 +327,19 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
           },
         ],
       });
+
+      adminAccessEntry.node.addDependency(cluster);
     }
 
     // Karpenter Node Role 用 Access Entry
     // Karpenter が作成した Node が EKS Cluster に登録できるようにする
-    new eks.CfnAccessEntry(this, 'KarpenterNodeAccessEntry', {
+    const karpenterNodeAccessEntry = new eks.CfnAccessEntry(this, 'KarpenterNodeAccessEntry', {
       clusterName,
       principalArn: karpenterNodeRole.roleArn,
       type: 'EC2_LINUX',
     });
+
+    karpenterNodeAccessEntry.node.addDependency(cluster);
 
   }
 }
