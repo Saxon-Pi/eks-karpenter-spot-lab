@@ -18,6 +18,14 @@ spec:
       labels:
         app: request-test-light
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          minDomains: 3 # 複数 Node を強制する
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: request-test-light
       nodeSelector:
         workload-type: karpenter-spot
       containers:
