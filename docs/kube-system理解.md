@@ -1,4 +1,10 @@
+<!-- omit in toc -->
 # kube-system 理解
+
+- [CoreDNS の名前解決確認](#coredns-の名前解決確認)
+- [CoreDNS / Service による Pod 間通信確認](#coredns--service-による-pod-間通信確認)
+- [aws-node](#aws-node)
+
 
 ```bash
 kubectl get pods -n kube-system -o wide
@@ -40,7 +46,7 @@ CoreDNS は Kubernetes Cluster 内の DNS サーバーとして機能する
 Pod は Service 名で通信先を指定できるが、実際に通信するためには IP アドレスが必要になる  
 CoreDNS は以下のような Service の FQDN を ClusterIP に変換する  
 
-```
+```text
 kubernetes.default.svc.cluster.local
 ↓
 172.20.0.1
@@ -58,7 +64,7 @@ kubectl get pods -n kube-system -o wide
 
 実行結果  
 
-```
+```log
 NAME                       READY   STATUS    RESTARTS   AGE   IP             NODE                                             NOMINATED NODE   READINESS GATES
 aws-node-c2thr             2/2     Running   0          23m   10.0.254.99    ip-10-0-254-99.ap-northeast-1.compute.internal   <none>           <none>
 coredns-6b8858d7f5-sjvxx   1/1     Running   0          26m   10.0.196.116   ip-10-0-254-99.ap-northeast-1.compute.internal   <none>           <none>
@@ -71,7 +77,8 @@ CoreDNS は kube-system namespace 上で Deployment として動作している
 ```bash
 kubectl get pods -n kube-system -l k8s-app=kube-dns -o wide
 ```
-```
+
+```log
 NAME                       READY   STATUS    RESTARTS   AGE   IP             NODE                                             NOMINATED NODE   READINESS GATES
 coredns-6b8858d7f5-sjvxx   1/1     Running   0          20m   10.0.196.116   ip-10-0-254-99.ap-northeast-1.compute.internal   <none>           <none>
 coredns-6b8858d7f5-zwcwr   1/1     Running   0          20m   10.0.241.179   ip-10-0-254-99.ap-northeast-1.compute.internal   <none>           <none>
@@ -117,7 +124,7 @@ metadata:
 
 重要なのは以下の設定  
 
-```
+```text
 kubernetes cluster.local in-addr.arpa ip6.arpa
 ```
 
@@ -140,7 +147,7 @@ kubectl run dns-test \
 
 実行結果  
 
-```
+```log
 Server:         172.20.0.10     # 今回問い合わせた DNS サーバ (CoreDNS)
 Address:        172.20.0.10:53  # DNS のポート番号
 Name:   kubernetes.default.svc.cluster.local  # 問い合わせた名前
@@ -150,7 +157,7 @@ pod "dns-test" deleted from default namespace
 
 ここで確認できることは以下  
 
-```
+```text
 DNS Server: 172.20.0.10
 解決対象: kubernetes.default.svc.cluster.local
 解決結果: 172.20.0.1
@@ -167,7 +174,7 @@ DNS Server: 172.20.0.10
 kubectl get svc kubernetes -n default
 ```
 
-```
+```log
 NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
 kubernetes   ClusterIP   172.20.0.1   <none>        443/TCP   22m
 ```
@@ -180,7 +187,7 @@ kubernetes   ClusterIP   172.20.0.1   <none>        443/TCP   22m
 
 今回の検証で確認したのは、通信先への実通信ではなく、Service 名の名前解決まで  
 
-```
+```text
 dns-test Pod
   ↓
 CoreDNS Service
@@ -195,7 +202,7 @@ kubernetes.default.svc.cluster.local を解決
 
 つまり、今回確認できたのは以下  
 
-```
+```text
 Service FQDN
 ↓
 CoreDNS
@@ -210,7 +217,7 @@ ClusterIP
 今回の nslookup は DNS 問い合わせのみを行っている  
 そのため、以下の通信までは確認していない  
 
-```
+```text
 dns-test Pod
   ↓
 kubernetes Service 172.20.0.1
@@ -226,7 +233,7 @@ Service の ClusterIP にアクセスした後、実際にバックエンドへ�
 
 CoreDNS と kube-proxy は役割が異なる  
 
-```
+```text
 CoreDNS
 → Service 名を ClusterIP に名前解決する
 
@@ -239,39 +246,254 @@ kube-proxy
 
 ---
 
-## kube-proxy
+## CoreDNS / Service による Pod 間通信確認
+
+### 目的
+
+Kubernetes Cluster 内で、以下の動作を確認する  
+
+- CoreDNS が Service 名を名前解決すること
+- Service が Pod 群を束ねること
+- Pod から Service 名で通信できること
+
+---
+
+### 構成
+
+nginx Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-test
+spec:
+  replicas: 3
+```
+
+nginx Service
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx-test
+  ports:
+    - port: 80
+      targetPort: 80
+```
+
+---
+
+### Pod 作成確認
 
 ```bash
-kubectl create deployment nginx \
-  --image=nginx
+kubectl get pods -o wide
 ```
+
+nginx Pod が3台起動している  
+
+```log
+NAME                          READY   STATUS    IP
+nginx-test-6595686b84-4qjhg   1/1     Running   10.0.197.56
+nginx-test-6595686b84-pvq7g   1/1     Running   10.0.251.246
+nginx-test-6595686b84-rlslk   1/1     Running   10.0.219.79
+```
+
+---
+
+### Service 作成確認
 
 ```bash
-kubectl expose deployment nginx \
-  --port 80
+kubectl get svc
 ```
 
+nginx-service という Service（ClusterIP）が作成された  
+
+```log
+NAME            TYPE        CLUSTER-IP
+kubernetes      ClusterIP   172.20.0.1
+nginx-service   ClusterIP   172.20.194.45
 ```
-kubectl get svc nginx
-```
+
+---
+
+### CoreDNS による名前解決確認
+
+名前解決（nslookup）確認用 Pod を起動する
 
 ```bash
-kubectl run curl \
-  --image=curlimages/curl \
+kubectl run dns-test \
+  --image=busybox:1.36 \
   -it --rm \
   --restart=Never \
-  -- curl http://nginx
+  -- nslookup nginx-service
 ```
 
+結果
+
+```log
+Server: 172.20.0.10
+Address: 172.20.0.10:53
+Name: nginx-service.default.svc.cluster.local
+Address: 172.20.194.45 # 名前解決結果
 ```
-Service
- ↓
+
+Service 名から ClusterIP への名前解決が成功したことを確認できた  
+
+```text
+CoreDNS (172.20.0.10)
+  ↓
+nginx-service.default.svc.cluster.local
+  ↓
+172.20.194.45
+```
+
+---
+
+### Service が束ねる Pod 確認
+
+```bash
+kubectl get endpoints nginx-service
+```
+
+結果
+
+```log
+NAME            ENDPOINTS
+nginx-service   10.0.197.56:80,10.0.219.79:80,10.0.251.246:80
+```
+
+Service は selector に一致する Pod を Endpoint として管理していることが確認できた  
+
+```text
+nginx-service
+ ├ 10.0.197.56:80
+ ├ 10.0.219.79:80
+ └ 10.0.251.246:80
+```
+
+---
+
+### Pod 間通信確認
+
+送信元 Pod を起動する  
+
+```bash
+kubectl run curl-test \
+  --image=curlimages/curl \
+  -it --rm \
+  -- sh
+```
+
+Pod 内で curl コマンドを実行する  
+
+```bash
+curl http://nginx-service
+```
+
+結果として、nginx のレスポンスが返却される  
+
+```html
+<h1>Welcome to nginx!</h1>
+```
+
+---
+
+### 通信フロー
+
+今回確認できた通信経路は以下となる  
+
+```text
+curl-test Pod
+        │
+        │ curl http://nginx-service
+        ▼
+CoreDNS
+        │
+        │ 名前解決
+        ▼
+nginx-service.default.svc.cluster.local
+        │
+        ▼
+172.20.194.45 (ClusterIP)
+        │
+        ▼
+Service / kube-proxy
+        │
+        ├→ 10.0.197.56
+        ├→ 10.0.219.79
+        └→ 10.0.251.246
+                │
+                ▼
+           nginx Pod
+```
+
+---
+
+### 学んだこと
+
+- Service 作成時に ClusterIP が払い出される
+- CoreDNS は Service 名を ClusterIP へ名前解決する
+- Service は selector に一致する Pod を Endpoint として管理する
+- Pod は Service 名だけで通信できる
+- kube-proxy は ClusterIP 宛通信を実際の Pod へ転送する
+- Pod 同士は直接 IP を知らなくても Service 名で通信できる
+
+---
+
+### CoreDNS の役割
+
+```text
+Service名
+↓
 ClusterIP
- ↓
-kube-proxy
- ↓
-実Podへ転送
 ```
+
+への名前解決を担当する  
+
+例
+
+```text
+nginx-service.default.svc.cluster.local
+↓
+172.20.194.45
+```
+
+---
+
+### kube-proxy の役割
+
+```
+ClusterIP
+↓
+実際の Pod
+```
+
+への転送を担当する  
+
+例
+
+```text
+172.20.194.45
+↓
+10.0.197.56
+
+または
+
+10.0.219.79
+
+または
+
+10.0.251.246
+```
+
+ClusterIP は仮想IPであり、実際の Pod へのルーティングは kube-proxy が実施している  
+
+---
 
 ## aws-node
 
