@@ -1,13 +1,61 @@
 <!-- omit in toc -->
 # kube-system 理解
 
+- [目的](#目的)
 - [CoreDNS の名前解決確認](#coredns-の名前解決確認)
 - [CoreDNS / Service による Pod 間通信確認](#coredns--service-による-pod-間通信確認)
-- [aws-node](#aws-node)
+- [aws-node (AWS VPC CNI) の IP 割り当て確認](#aws-node-aws-vpc-cni-の-ip-割り当て確認)
 
+---
+
+## 目的
+
+EKS クラスター上で動作する kube-system コンポーネントの役割を理解する  
+
+特に Pod 間通信が成立するまでの流れを追いながら、  
+
+- CoreDNS
+- Service (ClusterIP)
+- kube-proxy
+- aws-node (AWS VPC CNI)
+
+がそれぞれ何を担当しているのかを確認する  
+
+最終的に以下の通信経路を説明できる状態を目指す  
+
+```text
+Pod
+ ↓
+CoreDNS
+ ↓
+ClusterIP
+ ↓
+kube-proxy
+ ↓
+Pod IP
+ ↓
+aws-node
+ ↓
+ENI
+ ↓
+VPC
+```
+
+---
+
+### 検証項目
+
+- CoreDNS の名前解決確認
+- CoreDNS / Service による Pod 間通信確認
+- aws-node (AWS VPC CNI) の IP 割り当て確認
+
+---
+
+### kube-system コンポーネント一覧
 
 ```bash
 kubectl get pods -n kube-system -o wide
+
 kubectl get deployment -n kube-system coredns -o yaml
 kubectl get daemonset -n kube-system aws-node -o yaml
 kubectl get daemonset -n kube-system kube-proxy -o yaml
@@ -15,19 +63,44 @@ kubectl get daemonset -n kube-system kube-proxy -o yaml
 
 | コンポーネント | 種別 | 役割 |
 | --- | --- | --- |
-| CoreDNS | Deployment | Cluster内DNS。PodがService名や外部FQDNを名前解決する |
-| aws-node | DaemonSet | Amazon VPC CNI。PodにVPC IPを割り当てる |
-| kube-proxy | DaemonSet | Service / ClusterIP 通信をNode上で実現する |
+| CoreDNS | Deployment | Service名 → ClusterIP の名前解決 |
+| aws-node | DaemonSet | Pod IP を VPC から払い出す |
+| kube-proxy | DaemonSet | ClusterIP → Pod のルーティング |
+| Service | Kubernetes Resource | Pod の集合を表現し、固定の仮想IPを提供 |
 
-```bash
-kubectl get pods -n kube-system -o wide
+---
 
-NAME                       READY   STATUS    RESTARTS   AGE   IP             NODE                                             NOMINATED NODE   READINESS GATES
-aws-node-c2thr             2/2     Running   0          10m   10.0.254.99    ip-10-0-254-99.ap-northeast-1.compute.internal   <none>           <none>
-coredns-6b8858d7f5-sjvxx   1/1     Running   0          14m   10.0.196.116   ip-10-0-254-99.ap-northeast-1.compute.internal   <none>           <none>
-coredns-6b8858d7f5-zwcwr   1/1     Running   0          14m   10.0.241.179   ip-10-0-254-99.ap-northeast-1.compute.internal   <none>           <none>
-kube-proxy-dpnsr           1/1     Running   0          10m   10.0.254.99    ip-10-0-254-99.ap-northeast-1.compute.internal   <none>           <none>
+### 今回理解したい全体像
+
+```text
+① Pod が Service 名で通信する
+
+curl http://nginx-service
+
+        ↓
+
+② CoreDNS が名前解決
+
+nginx-service
+        ↓
+172.20.194.45
+
+        ↓
+
+③ kube-proxy が転送
+
+172.20.194.45
+        ↓
+10.0.x.x
+
+        ↓
+
+④ aws-node が管理する Pod IP に到達
+
+Pod
 ```
+
+---
 
 ## CoreDNS の名前解決確認
 
@@ -495,16 +568,285 @@ ClusterIP は仮想IPであり、実際の Pod へのルーティングは kube-
 
 ---
 
-## aws-node
+## aws-node (AWS VPC CNI) の IP 割り当て確認
 
-```bash
-kubectl get daemonset aws-node -n kube-system
+### 目的
+
+Kubernetes Pod に割り当てられる IP アドレスがどこから来ているのかを確認する
+
+今回の検証では以下を確認する  
+
+- aws-node が DaemonSet として各 Node 上で動作していること
+- Pod IP が VPC CIDR から割り当てられていること
+- Pod IP が EC2 の ENI に紐付いていること
+
+---
+
+### aws-node とは
+
+aws-node は EKS 標準の CNI (Container Network Interface) プラグインである  
+（正式には AWS VPC CNI と呼ばれる）  
+
+CoreDNS や kube-proxy が DNS や Service 転送を担当するのに対し、aws-node は Pod のネットワーク設定を担当する  
+
+具体的には以下を実施している
+
+```text
+Pod 作成
+ ↓
+aws-node
+ ↓
+VPC 内の IP を確保
+ ↓
+Pod に割り当て
+ ↓
+Pod が VPC ネットワークへ参加
 ```
 
-```bash
-kubectl get pods -n kube-system -l k8s-app=aws-node -o wide
-```
+---
+
+### DaemonSet の確認
+
+aws-node は DaemonSet として動作している
 
 ```bash
-kubectl get nodes
+kubectl get daemonset -n kube-system
 ```
+
+実行結果
+
+```log
+NAME         DESIRED   CURRENT   READY
+aws-node     1         1         1
+kube-proxy   1         1         1
+```
+
+DaemonSet のため Node ごとに 1 Pod 起動される  
+
+```text
+Node1
+ ├ aws-node
+ └ kube-proxy
+
+Node2
+ ├ aws-node
+ └ kube-proxy
+```
+
+---
+
+### aws-node Pod の確認
+
+```bash
+kubectl get pods -n kube-system -o wide
+```
+
+実行結果
+
+```log
+NAME             READY   IP
+aws-node-qskwd   2/2     10.0.172.28
+```
+
+Node 情報を確認する
+
+```bash
+kubectl describe node ip-10-0-172-28.ap-northeast-1.compute.internal
+```
+
+実行結果
+
+```log
+InternalIP: 10.0.172.28
+```
+
+aws-node Pod の IP と Node の InternalIP が一致している  
+→ aws-node が hostNetwork を利用して Node ネットワーク上で動作しているため  
+
+```text
+Node
+10.0.172.28
+   │
+   └ aws-node Pod
+      10.0.172.28
+```
+
+---
+
+### Pod IP の確認
+
+現在の Pod 一覧を取得  
+
+```bash
+kubectl get pods -A -o wide
+```
+
+実行結果  
+
+```log
+NAMESPACE     NAME                       IP
+kube-system   aws-node-qskwd             10.0.172.28
+kube-system   coredns-5566996c6f-4xs4f   10.0.178.17
+kube-system   coredns-5566996c6f-mwcnp   10.0.170.215
+kube-system   kube-proxy-jb9dv           10.0.172.28
+```
+
+CoreDNS Pod には個別の Pod IP が割り当てられていることが分かる
+
+```text
+coredns
+ ├ 10.0.178.17
+ └ 10.0.170.215
+```
+
+---
+
+### VPC CIDR の確認
+
+EKS 用 VPC
+
+```text
+VPC CIDR
+10.0.0.0/16
+```
+
+Pod の IP を見ると、すべて VPC CIDR 内であることが分かる  
+→ aws-node は VPC のアドレス空間から Pod IP を割り当てている  
+
+```text
+10.0.178.17
+10.0.170.215
+10.0.172.28
+```
+
+### ENI の確認
+
+EC2 側のネットワーク情報を確認する  
+
+```bash
+aws ec2 describe-instances \
+  --profile <user-name> \
+  --region ap-northeast-1 \
+  --filters "Name=private-dns-name,Values=ip-10-0-172-28.ap-northeast-1.compute.internal" \
+  --query 'Reservations[*].Instances[*].[InstanceId,PrivateIpAddress,NetworkInterfaces[*].PrivateIpAddresses[*].PrivateIpAddress]' \
+  --output json
+```
+
+実行結果  
+
+```json
+[
+  [
+    [
+      "i-00cd2875b5db4ef37",
+      "10.0.172.28",
+      [
+        [
+          "10.0.172.28",
+          "10.0.178.17",
+          "10.0.170.215",
+          "10.0.162.199",
+          "10.0.167.56",
+          "10.0.171.123"
+        ]
+      ]
+    ]
+  ]
+]
+```
+
+EC2 インスタンスには複数の Private IP がアタッチされていて、  
+その中に CoreDNS Pod の IP が存在する  
+
+```text
+10.0.178.17
+10.0.170.215
+```
+
+→ Pod IP は EC2 の ENI に割り当てられた Secondary Private IP を利用していることが確認できる
+
+---
+
+### 今回確認した流れ
+
+```text
+Pod 作成
+ ↓
+aws-node
+ ↓
+EC2 ENI の Secondary IP を確保
+ ↓
+Pod へ割り当て
+ ↓
+Pod が VPC ネットワークへ参加
+```
+
+実際には以下の関係になっている
+
+```text
+EC2 Node
+10.0.172.28
+
+ENI
+ ├ 10.0.172.28
+ ├ 10.0.178.17
+ ├ 10.0.170.215
+ ├ 10.0.162.199
+ ├ 10.0.167.56
+ └ 10.0.171.123
+
+CoreDNS Pod
+ ├ 10.0.178.17
+ └ 10.0.170.215
+```
+
+---
+
+### CoreDNS / kube-proxy / aws-node の役割分担
+
+今回の検証で kube-system の主要コンポーネントの役割を確認できた  
+
+```text
+CoreDNS
+↓
+Service名 → ClusterIP
+
+kube-proxy
+↓
+ClusterIP → Pod
+
+aws-node (VPC CNI)
+↓
+PodへIP割り当て
+```
+
+通信全体で見ると以下の流れになる  
+
+```text
+Pod
+ ↓
+CoreDNS
+ ↓
+ClusterIP
+
+ ↓
+kube-proxy
+ ↓
+Pod IP
+
+ ↓
+aws-node が割り当てた VPC IP
+```
+
+---
+
+学んだこと
+
+- aws-node は AWS VPC CNI の実体である
+- aws-node は DaemonSet として各 Node に 1 Pod 配置される
+- Pod IP は VPC CIDR から払い出される
+- Pod IP は EC2 ENI の Secondary Private IP を利用している
+- CoreDNS や kube-proxy と異なり、aws-node はネットワークアドレス管理を担当する
+- EKS の Pod は VPC ネットワーク上の IP を直接持つため、AWS リソースとの通信がシンプルに実現できる
+
+---
