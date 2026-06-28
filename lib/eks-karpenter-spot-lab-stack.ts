@@ -341,5 +341,61 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
 
     karpenterNodeAccessEntry.node.addDependency(cluster);
 
+    // =====================================================
+    // AWS Load Balancer Controller IAM
+    // =====================================================
+
+    const albControllerServiceAccount = cluster.addServiceAccount(
+      'AwsLoadBalancerControllerServiceAccount',
+      {
+        name: 'aws-load-balancer-controller',
+        namespace: 'kube-system',
+      },
+    );
+
+    // 検証用のため、広めに権限付与
+    // 本番では公式 iam_policy.json 相当へ絞る
+    albControllerServiceAccount.role.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'iam:CreateServiceLinkedRole',
+
+          'ec2:DescribeAccountAttributes',
+          'ec2:DescribeAddresses',
+          'ec2:DescribeAvailabilityZones',
+          'ec2:DescribeInternetGateways',
+          'ec2:DescribeVpcs',
+          'ec2:DescribeVpcPeeringConnections',
+          'ec2:DescribeSubnets',
+          'ec2:DescribeSecurityGroups',
+          'ec2:DescribeInstances',
+          'ec2:DescribeNetworkInterfaces',
+          'ec2:DescribeTags',
+          'ec2:DescribeRouteTables',
+          'ec2:GetSecurityGroupsForVpc',
+
+          'ec2:CreateSecurityGroup',
+          'ec2:CreateTags',
+          'ec2:DeleteTags',
+          'ec2:AuthorizeSecurityGroupIngress',
+          'ec2:RevokeSecurityGroupIngress',
+          'ec2:DeleteSecurityGroup',
+
+          'elasticloadbalancing:*',
+
+          'acm:ListCertificates',
+          'acm:DescribeCertificate',
+          'iam:ListServerCertificates',
+          'iam:GetServerCertificate',
+          'waf-regional:*',
+          'wafv2:*',
+          'shield:*',
+          'cognito-idp:DescribeUserPoolClient',
+        ],
+        resources: ['*'],
+      }),
+    );
+
+
   }
 }
