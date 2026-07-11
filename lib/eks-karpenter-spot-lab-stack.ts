@@ -396,6 +396,28 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
       }),
     );
 
+    // =====================================================
+    // Argo CD
+    // =====================================================
+
+    const argoCdChart = cluster.addHelmChart('ArgoCd', {
+      chart: 'argo-cd',
+      repository: 'https://argoproj.github.io/argo-helm',
+      namespace: 'argocd',
+      createNamespace: true,
+
+      // 再現性のため、動作確認したChart versionを固定する
+      // version: 'x.y.z',
+
+      values: {
+        server: {
+          service: {
+            type: 'ClusterIP',
+          },
+        },
+      },
+    });
+
 
   }
 }
