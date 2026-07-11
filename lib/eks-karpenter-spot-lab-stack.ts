@@ -406,10 +406,12 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
       namespace: 'argocd',
       createNamespace: true,
 
-      // 再現性のため、動作確認したChart versionを固定する
-      // version: 'x.y.z',
-
       values: {
+        configs: {
+          params: {
+            'server.insecure': true,
+          },
+        },
         server: {
           service: {
             type: 'ClusterIP',
