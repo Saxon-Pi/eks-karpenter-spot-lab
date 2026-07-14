@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nginx
+  namespace: argocd
+
+spec:
+  project: default
+
+  source:
+    # GitHub Repository URL
+    repoURL: https://github.com/Saxon-Pi/eks-karpenter-spot-lab.git
+
+    # 監視対象のbranch
+    targetRevision: develop
+
+    # Repository内でArgo CDが監視するディレクトリ
+    path: k8s/apps/nginx
+
+  destination:
+    # Argo CD自身が動いているEKS Cluster
+    server: https://kubernetes.default.svc
+
+    # nginxをデプロイするnamespace
+    namespace: default
+
+  syncPolicy:
+    automated:
+      # Gitから削除されたResourceをClusterからも削除する
+      prune: true
+
+      # Cluster側の手動変更をGitの状態へ戻す
+      selfHeal: true
+
+    syncOptions:
+      # destination.namespaceが存在しなければ作成する
+      - CreateNamespace=true
