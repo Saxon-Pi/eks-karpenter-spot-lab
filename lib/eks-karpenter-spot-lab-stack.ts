@@ -408,6 +408,8 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
       createNamespace: true,
 
       values: {
+        fullnameOverride: "argocd",
+        
         configs: {
           params: {
             'server.insecure': true,
