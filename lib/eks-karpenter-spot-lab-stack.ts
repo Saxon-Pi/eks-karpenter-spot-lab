@@ -401,6 +401,7 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
     // =====================================================
 
     const argoCdChart = cluster.addHelmChart('ArgoCd', {
+      release: "argocd",
       chart: 'argo-cd',
       repository: 'https://argoproj.github.io/argo-helm',
       namespace: 'argocd',
