@@ -409,7 +409,7 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
 
       values: {
         fullnameOverride: "argocd",
-        
+
         configs: {
           params: {
             'server.insecure': true,
@@ -422,6 +422,35 @@ export class EksKarpenterSpotLabStack extends cdk.Stack {
         },
       },
     });
+
+    // =====================================================
+    // AWS Load Balancer Controller
+    // =====================================================
+
+    const albControllerChart = cluster.addHelmChart(
+      'AwsLoadBalancerController',
+      {
+        release: 'aws-load-balancer-controller',
+        chart: 'aws-load-balancer-controller',
+        repository: 'https://aws.github.io/eks-charts',
+        namespace: 'kube-system',
+
+        values: {
+          clusterName: cluster.clusterName,
+          region: cdk.Stack.of(this).region,
+          vpcId: vpc.vpcId,
+
+          serviceAccount: {
+            create: false,
+            name: albControllerServiceAccount.serviceAccountName,
+          },
+        },
+      },
+    );
+
+    albControllerChart.node.addDependency(
+      albControllerServiceAccount,
+    );
 
 
   }
