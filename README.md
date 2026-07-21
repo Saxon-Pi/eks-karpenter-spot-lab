@@ -1,117 +1,135 @@
-# EKS Karpenter Spot Lab
+# Amazon EKS × Karpenter 技術検証
 
 ## 概要
 
-本プロジェクトは Amazon EKS 上で Karpenter を利用し、以下を検証する  
+Amazon EKS を題材に **Kubernetes の内部動作を理解すること** を目的として、  
+段階的な技術検証を実施した
 
-- Node 自動プロビジョニング
-- Spot Instance 活用
-- Node 最適化
-- コスト最適化
-- Interruption Handling
+単に EKS クラスターを構築するだけではなく、
 
-従来の Managed Node Group + Node Termination Handler 構成とは異なり、  
-Karpenter を利用することで Kubernetes ワークロードの要求に応じた Node の自動作成・削除を実現する  
+- なぜ Pod がその Node に配置されるのか
+- kube-system の各コンポーネントは何をしているのか
+- Ingress はどのように ALB を作成するのか
+- GitOps では Git の変更がどのように反映されるのか
 
-また、Spot Instance を活用しながら、高可用性を維持する構成を検証することを目的とする  
+など、実際に動作を確認しながら理解を深めた
 
-## 検証機能
+---
 
-Karpenter
-
-- NodePool
-- EC2NodeClass
-- Node Lifecycle Management
-- Consolidation
-- Drift
-- Interruption Handling
-
-Kubernetes
-
-- Pod Scheduling
-- Resource Requests / Limits
-- NodeSelector
-- Taints / Tolerations
-- Affinity
-- Topology Spread Constraints
-- Pod Disruption Budget
-
-AWS
+# 検証環境
 
 - Amazon EKS
-- EC2 Spot Instances
-- EventBridge
-- SQS
-- IAM Roles for Service Accounts (IRSA)
-- CloudWatch Logs
+- AWS CDK (TypeScript)
+- Karpenter
+- Argo CD
+- AWS Load Balancer Controller
+- NGINX
 
-## アーキテクチャ
+---
 
-```text
-Pending Pod
-↓
-Kubernetes Scheduler
-↓
-Karpenter
-↓
-EC2 Fleet API
-↓
-Spot Node Provisioning
-↓
-Pod Scheduling
-```
+# 学習ロードマップ
 
-## Spot Interruption
+## ① Karpenter と NodeGroup の違い
 
-```text
-Spot Interruption
-Rebalance Recommendation
-Scheduled Maintenance
-↓
-EventBridge
-↓
-SQS
-↓
-Karpenter
-↓
-Node Drain
-↓
-Pod Re-Scheduling
-↓
-New Spot Node
-```
+Karpenter の役割や Managed NodeGroup との違いを整理し、  
+Pod が Pending になってから Node が作成されるまでの流れを理解した
 
-## 検証項目
+### 学んだこと
 
-1. Dynamic Node Provisioning
+- NodeGroup と Karpenter の役割の違い
+- NodePool / EC2NodeClass の構成
+- Karpenter が Node を起動するタイミング
+- Cluster Autoscaler との違い
 
-Pod 作成時に Node が自動生成されることを確認
+📄 詳細は以下
 
-2. Dynamic Node Consolidation
+- [01_KarpenterとNodeGroupの違い.md](docs/01_KarpenterとNodeGroupの違い.md)
 
-不要 Node が自動削除されることを確認
+---
 
-3. Spot Node Provisioning
+## ② Request CPU / Memory の検証
 
-Spot Node が自動選択されることを確認
+Deployment の Request CPU / Memory を変更し、  
+Kubernetes Scheduler と Karpenter の動作を確認した
 
-4. Topology Spread Constraints
+### 学んだこと
 
-Pod が Node 間に分散配置されることを確認
+- Scheduler が Request を利用して配置を判断する仕組み
+- Request と Limit の違い
+- Pending Pod 発生時の Karpenter の動作
+- 適切な Request 設計の重要性
 
-5. Pod Disruption Budget
+📄 詳細は以下
 
-Node 中断時でも最低稼働台数が維持されることを確認
+- [02_Requestサイズ検証.md](docs/02_Requestサイズ検証.md)
 
-6. Interruption Handling
+---
 
-Spot 終了イベントおよび Rebalance Recommendation を検知し、  
-Pod が Graceful Shutdown できることを確認
+## ③ kube-system の理解
 
-## プロジェクトゴール
+EKS クラスター起動時に作成されるシステム Pod の役割を調査した
 
-- Karpenter の仕組みを理解する
-- EKS の Node Lifecycle を理解する
-- Spot Instance 運用を理解する
-- コスト最適化パターンを学習する
-- 実務レベルで Karpenter を運用できる知識を身につける
+### 学んだこと
+
+- CoreDNS
+- aws-node (AWS VPC CNI)
+- kube-proxy
+- DaemonSet と Deployment の違い
+- Pod と Container の違い
+
+📄 詳細は以下
+
+- [03_kube-system理解.md](docs/03_kube-system理解.md)
+
+---
+
+## ④ Ingress の理解
+
+AWS Load Balancer Controller を利用し、  
+Ingress から ALB が自動作成される仕組みを確認した
+
+### 学んだこと
+
+- Service と Ingress の役割
+- Ingress Controller の必要性
+- ALB の自動作成
+- Kubernetes と AWS の連携
+
+📄 詳細は以下
+
+- [04_Ingress理解.md](docs/04_Ingress理解.md)
+
+---
+
+## ⑤ Argo CD (GitOps)
+
+GitHub Repository を Single Source of Truth とし、  
+GitOps によるアプリケーション管理を検証した
+
+### 学んだこと
+
+- GitOps の基本概念
+- Argo CD Application の構成
+- Git Push による自動同期
+- Deployment → ReplicaSet → Pod の流れ
+- Scheduler の役割
+- Node の Pod 上限による Pending 発生
+
+📄 詳細は以下
+
+- [05_ArgoCD理解.md](docs/05_ArgoCD理解.md)
+
+---
+
+# 今後の予定
+
+今後は、より実践的な EKS 運用を想定した検証を実施予定
+
+- Spot Node の自動スケーリング
+- Node の自動集約 (Consolidation)
+- Node 障害時の Pod 再配置
+- Spot Interruption の検証
+- NodeClaim のライフサイクル確認
+- GitOps による複数アプリケーション管理
+
+---
